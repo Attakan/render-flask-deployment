@@ -6,10 +6,10 @@ from mysql.connector import Error
 def create_db_connection():
     try:
         connection = mysql.connector.connect(
-            host="localhost",  # Replace with your MySQL host
-            user="root",       # Replace with your MySQL username
-            password="Kk@1234859",       # Replace with your MySQL password
-            database="sqcb_db"  # Replace with your database name
+            host="Attakan.mysql.pythonanywhere-services.com",  # Replace with AwardSpace MySQL host
+            user="Attakan",   # Replace with AwardSpace MySQL username
+            password="Kk@1234859",   # Replace with AwardSpace MySQL password
+            database="Attakan$sqcbdb"  # Replace with your AwardSpace database name
         )
         return connection
     except Error as e:
