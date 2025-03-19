@@ -28,13 +28,20 @@ def empty_string_to_none(s, default=None):
     return s if s != '' else default
 
 def parse_date(s):
-    if s and s != '':
-        try:
-            return datetime.strptime(s, '%Y-%m-%d').date()
-        except ValueError:
-            return None
-    else:
+    if not s or s.strip() == "":
         return None
+    
+    try:
+        # Try ISO format (YYYY-MM-DD)
+        return datetime.strptime(s, '%Y-%m-%d').date()
+    except ValueError:
+        try:
+            # Try alternate format (DD/MM/YYYY)
+            return datetime.strptime(s, '%d/%m/%Y').date()
+        except ValueError:
+            # Additional debug info
+            print(f"Could not parse date string: '{s}'")
+            return None
 
 def supplier_exists(supplier_code):
     connection = None
@@ -204,6 +211,33 @@ def get_supplier_name(supplier_code):
             return jsonify(result), 200
         else:
             return jsonify({"error": "Supplier not found"}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+
+##############################################################################
+# GET /part/<part_number>
+##############################################################################
+@app.route('/part/<part_number>', methods=['GET'])
+@cross_origin()
+def get_part_info(part_number):
+    connection = None
+    cursor = None
+    try:
+        connection = create_db_connection()
+        cursor = connection.cursor(dictionary=True)
+        query = "SELECT part_number, part_name FROM part_detail WHERE part_number = %s"
+        cursor.execute(query, (part_number,))
+        result = cursor.fetchone()
+        if result:
+            return jsonify(result), 200
+        else:
+            return jsonify({"error": "Part not found"}), 404
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -405,6 +439,12 @@ def update_sqcb(id):
     connection = None
     cursor = None
     try:
+
+        # Log the raw form data for debugging
+        print("Raw form data received:")
+        for key in request.form:
+            print(f"  {key}: {request.form[key]}")
+
         data = request.form
         attachments_files = request.files.getlist('attachments')
         pictures_files = request.files.getlist('pictures')
@@ -427,13 +467,19 @@ def update_sqcb(id):
                 return existing_data.get(field)
 
         def get_date_field(field):
-            new_val = data.get(field, "").strip()
-            if new_val:
-                # return the parsed date
-                return parse_date(new_val)
-            else:
-                # if existing value exists, return it (it should be a date or None)
-                return existing_data.get(field)
+            new_val = data.get(field)
+            
+            # Only process if we explicitly received a value
+            if new_val is not None and new_val.strip() != "":
+                try:
+                    parsed_date = parse_date(new_val)
+                    if parsed_date:
+                        return parsed_date
+                except Exception as e:
+                    print(f"Date parsing failed for {field}: {str(e)}")
+            
+            # In all other cases, preserve the existing value
+            return existing_data.get(field)
 
         update_query = """
         UPDATE sqcb_detail
@@ -750,23 +796,21 @@ def update_profile(user_id):
         if not existing_user:
             return jsonify({"error": f"User with ID {user_id} not found"}), 404
 
-        sql = """
-            UPDATE user_detail
-            SET
-                username = %s,
-                password_hash = %s,
-                name = %s,
-                surname = %s,
-                fullname = %s,
-                job_description = %s,
-                email = %s,
-                supplier_code = %s,
-                role = %s
-            WHERE user_id = %s
-        """
-        update_values = (
-            data.get('username', ''),
-            data.get('password_hash', ''),
+        # Create base update fields list
+        update_fields = [
+            "username = %s",
+            "name = %s",
+            "surname = %s",
+            "fullname = %s",
+            "job_description = %s",
+            "email = %s",
+            "supplier_code = %s",
+            "role = %s"
+        ]
+        
+        # Start with base values
+        update_values = [
+            data.get('username', ''),            
             data.get('name', ''),
             data.get('surname', ''),
             data.get('fullname', ''),
@@ -774,8 +818,24 @@ def update_profile(user_id):
             data.get('email', ''),
             data.get('supplier_code', ''),
             data.get('role', ''),
-            user_id
-        )
+        ]
+        
+        # Only include password_hash if it was provided
+        password_hash = data.get('password_hash')
+        if password_hash:
+            update_fields.insert(1, "password_hash = %s")
+            update_values.insert(1, password_hash)
+
+        # Construct the final query
+        sql = f"""
+            UPDATE user_detail
+            SET {", ".join(update_fields)}
+            WHERE user_id = %s
+        """
+        
+        # Add the user_id to the values list
+        update_values.append(user_id)
+        
         cursor.execute(sql, update_values)
         connection.commit()
         return jsonify({"message": "User profile updated successfully"}), 200
